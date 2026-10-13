@@ -1,61 +1,60 @@
 
-import requests
 import streamlit as st
+import requests
 
-# FastAPI backend address
+# ---------------- CONFIGURATION ----------------
+
 API_URL = "http://127.0.0.1:8000/ask"
 
 st.set_page_config(
     page_title="AgriAgent - Smart Agriculture Advisor",
     page_icon="🌱",
-    layout="centered",
+    layout="wide",
 )
+
+# ---------------- HEADER ----------------
 
 st.title("🌱 AgriAgent")
 st.subheader("Smart Agriculture Advisor")
-
 st.write(
-    "Ask questions about crop recommendations, irrigation, fertilizer, "
-    "crop diseases, and agricultural market information."
+    "Ask questions about crops, irrigation, fertilizers, "
+    "crop diseases, and agricultural markets."
 )
 
-st.divider()
-
-# Farmer's question
-question = st.text_input(
-    "Your farming question",
-    placeholder="Example: Which crop should I grow?",
+st.info(
+    "Demonstration guidance only. Check local forecasts, "
+    "crop growth stage, soil type, and measured root-zone "
+    "moisture before irrigating."
 )
+
+# ---------------- FARMING DETAILS ----------------
+
+st.header("Farm Details")
 
 col1, col2 = st.columns(2)
 
 with col1:
     soil_type = st.selectbox(
         "Soil type",
-        ["Unknown", "Black", "Red", "Sandy", "Loamy", "Clay"],
+        ["black", "red", "sandy", "clay", "loamy"],
+    )
+
+    season = st.selectbox(
+        "Season",
+        ["monsoon", "winter", "summer"],
+    )
+
+    location = st.text_input(
+        "Location",
+        placeholder="e.g. Karnataka",
+    )
+
+    crop = st.text_input(
+        "Crop",
+        placeholder="e.g. rice, tomato, wheat",
     )
 
 with col2:
-    season = st.selectbox(
-        "Season",
-        ["Unknown", "Monsoon", "Winter", "Summer"],
-    )
-
-location = st.text_input(
-    "Location",
-    placeholder="Example: Karnataka",
-)
-
-crop = st.text_input(
-    "Crop name (optional)",
-    placeholder="Example: Rice",
-)
-
-st.caption("Optional details for the specialist agents")
-
-col3, col4 = st.columns(2)
-
-with col3:
     temperature_c = st.number_input(
         "Temperature (°C)",
         min_value=-10.0,
@@ -63,53 +62,69 @@ with col3:
         value=25.0,
     )
 
-    nitrogen = st.number_input(
-        "Nitrogen value (N)",
-        min_value=0.0,
-        value=0.0,
-    )
-
-    phosphorus = st.number_input(
-        "Phosphorus value (P)",
-        min_value=0.0,
-        value=0.0,
-    )
-
-with col4:
     rainfall_mm = st.number_input(
         "Rainfall (mm)",
         min_value=0.0,
+        max_value=1000.0,
         value=0.0,
     )
 
     soil_moisture = st.selectbox(
         "Soil moisture",
-        ["unknown", "dry", "moist", "wet"],
+        ["unknown", "low", "medium", "high"],
     )
 
-    potassium = st.number_input(
-        "Potassium value (K)",
-        min_value=0.0,
-        value=0.0,
-    )
+# ---------------- QUESTION ----------------
 
-symptoms = st.text_input(
-    "Crop symptoms (optional)",
-    placeholder="Example: Yellow leaves or brown spots",
+st.header("Ask AgriAgent")
+
+question = st.text_area(
+    "Your farming question",
+    placeholder=(
+        "e.g. Which crop should I grow, "
+        "and how can I improve my soil?"
+    ),
+    height=100,
 )
 
-if st.button("Get Advice", type="primary", use_container_width=True):
+with st.expander("Advanced details (optional)"):
+    col3, col4 = st.columns(2)
 
+    with col3:
+        nitrogen = st.number_input(
+            "Nitrogen",
+            min_value=0.0,
+            value=0.0,
+        )
+
+        phosphorus = st.number_input(
+            "Phosphorus",
+            min_value=0.0,
+            value=0.0,
+        )
+
+    with col4:
+        potassium = st.number_input(
+            "Potassium",
+            min_value=0.0,
+            value=0.0,
+        )
+
+        symptoms = st.text_area(
+            "Crop symptoms",
+            placeholder="e.g. yellow leaves and brown spots",
+        )
+
+# ---------------- SUBMIT QUESTION ----------------
+
+if st.button("Get Agricultural Advice", type="primary"):
     if not question.strip():
-        st.warning("Please enter your farming question.")
-
+        st.warning("Please enter a farming question.")
     else:
         payload = {
             "question": question.strip(),
-            "soil_type": (
-                "" if soil_type == "Unknown" else soil_type.lower()
-            ),
-            "season": "" if season == "Unknown" else season.lower(),
+            "soil_type": soil_type,
+            "season": season,
             "location": location.strip(),
             "crop": crop.strip(),
             "temperature_c": temperature_c,
@@ -122,70 +137,70 @@ if st.button("Get Advice", type="primary", use_container_width=True):
         }
 
         try:
-            with st.spinner("AgriAgent is processing your question..."):
+            with st.spinner("AgriAgent is preparing your advice..."):
                 response = requests.post(
                     API_URL,
                     json=payload,
-                    timeout=30,
+                    timeout=120,
                 )
 
-            # Show HTTP errors clearly
-            if response.status_code != 200:
-                st.error(f"API returned HTTP {response.status_code}.")
-                st.code(response.text)
-                st.stop()
-
+            response.raise_for_status()
             data = response.json()
 
-            st.success("AgriAgent received your question!")
+            st.success("Advice received successfully!")
 
             st.subheader("Selected Agent")
             st.write(data.get("agent", "Unknown"))
 
+            st.subheader("Agricultural Advice")
             result = data.get("result", {})
 
-            st.subheader("Agricultural Advice")
-
             if isinstance(result, dict):
-                if result.get("suggested_crop"):
-                    st.write(
-                        "**Suggested crop:**",
-                        result["suggested_crop"],
-                    )
-
-                if result.get("answer"):
-                    st.write(result["answer"])
-
-                if result.get("advice"):
-                    st.write(result["advice"])
-
-                if result.get("note"):
-                    st.info(result["note"])
-
-                with st.expander("View complete response"):
-                    st.json(data)
-
+                for key, value in result.items():
+                    st.markdown(f"**{key.replace('_', ' ').title()}**")
+                    st.write(value)
             else:
                 st.write(result)
 
-        except requests.exceptions.ConnectionError as error:
+            # MongoDB save status comes from backend/main.py
+            if data.get("database_saved") is True:
+                st.success("Your question and answer were saved to MongoDB.")
+                if data.get("history_id"):
+                    st.caption(
+                        f"Database record ID: {data['history_id']}"
+                    )
+            elif data.get("database_saved") is False:
+                st.warning(
+                    "Advice was generated, but saving to MongoDB failed. "
+                    "Check the FastAPI terminal."
+                )
+            else:
+                st.info(
+                    "The API did not report a database save status. "
+                    "Check backend/main.py."
+                )
+
+            with st.expander("View complete response JSON"):
+                st.json(data)
+
+        except requests.exceptions.ConnectionError:
             st.error(
-                "Could not connect to the AgriAgent API. "
-                "Check that FastAPI is running at "
-                "http://127.0.0.1:8000."
+                "Cannot connect to FastAPI. Start the backend first "
+                "using: uvicorn backend.main:app --reload"
             )
-            st.code(str(error))
 
         except requests.exceptions.Timeout:
             st.error(
-                "The API took too long to respond. "
+                "The request timed out. The AI agent may need more time. "
                 "Please try again."
             )
 
-        except requests.exceptions.RequestException as error:
-            st.error("A request error occurred.")
-            st.code(str(error))
+        except requests.exceptions.HTTPError as error:
+            st.error(f"FastAPI returned an error: {error}")
+            st.code(response.text)
 
-        except ValueError as error:
-            st.error("The API returned a response that could not be read.")
-            st.code(str(error))
+        except requests.exceptions.RequestException as error:
+            st.error(f"Request failed: {error}")
+
+        except ValueError:
+            st.error("The backend returned an invalid JSON response.")
