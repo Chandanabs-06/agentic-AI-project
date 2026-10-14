@@ -1,25 +1,19 @@
-
-from fastapi import FastAPI
-from pydantic import BaseModel
 from typing import TypedDict
 
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 
-# Import your existing agents
 from backend.ai_agent import ask_gemini
 from backend.crop_agent import recommend_crop
 from backend.weather_agent import get_irrigation_advice
 from backend.fertilizer_agent import get_fertilizer_advice
 from backend.disease_agent import assess_crop_symptoms
 from backend.market_agent import get_agriculture_information
-
-# Import MongoDB save function
-from backend.database import save_query
+from backend.database import save_query, get_recent_queries
 
 app = FastAPI(title="AgriAgent - Smart Agriculture Advisor")
 
-
-# ---------------- HOME ----------------
 
 @app.get("/")
 def home():
@@ -37,14 +31,24 @@ def home():
     }
 
 
-# ---------------- HEALTH ----------------
-
 @app.get("/health")
 def health():
     return {"status": "running"}
 
 
-# ---------------- AGENT STATE ----------------
+@app.get("/database-health")
+def database_health():
+    try:
+        from backend.database import test_database_connection
+
+        test_database_connection()
+        return {"status": "connected"}
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"MongoDB connection failed: {error}",
+        )
+
 
 class AgriState(TypedDict, total=False):
     agent: str
@@ -63,43 +67,39 @@ class AgriState(TypedDict, total=False):
     result: dict
 
 
-# ---------------- ROUTING ----------------
-
 def route_question(state: AgriState) -> str:
     question = state.get("question", "").lower()
 
     if any(word in question for word in [
         "disease", "pest", "insect", "spots",
-        "yellow leaves", "leaf infection"
+        "yellow leaves", "leaf infection",
     ]):
         return "disease"
 
     if any(word in question for word in [
         "fertilizer", "nitrogen", "phosphorus",
-        "potassium", "nutrient"
+        "potassium", "nutrient",
     ]):
         return "fertilizer"
 
     if any(word in question for word in [
-        "water", "irrigation", "rainfall", "temperature"
+        "water", "irrigation", "rainfall", "temperature",
     ]):
         return "weather"
 
     if any(word in question for word in [
-        "market", "price", "sell", "selling"
+        "market", "price", "sell", "selling",
     ]):
         return "market"
 
     if any(word in question for word in [
         "recommend crop", "which crop", "what crop",
-        "crop recommendation"
+        "crop recommendation",
     ]):
         return "crop"
 
     return "ai"
 
-
-# ---------------- CROP AGENT ----------------
 
 def crop_node(state: AgriState):
     result = recommend_crop(
@@ -112,8 +112,6 @@ def crop_node(state: AgriState):
         "agent": "Crop Recommendation Agent",
     }
 
-
-# ---------------- WEATHER AGENT ----------------
 
 def weather_node(state: AgriState):
     result = get_irrigation_advice(
@@ -128,8 +126,6 @@ def weather_node(state: AgriState):
     }
 
 
-# ---------------- FERTILIZER AGENT ----------------
-
 def fertilizer_node(state: AgriState):
     result = get_fertilizer_advice(
         state.get("crop", "unknown"),
@@ -143,20 +139,16 @@ def fertilizer_node(state: AgriState):
     }
 
 
-# ---------------- DISEASE AGENT ----------------
-
 def disease_node(state: AgriState):
     result = assess_crop_symptoms(
         state.get("crop", "unknown"),
-        state.get("symptoms", state.get("question", "")),
+        state.get("symptoms") or state.get("question", ""),
     )
     return {
         "result": result,
         "agent": "Pest and Crop Disease Agent",
     }
 
-
-# ---------------- MARKET AGENT ----------------
 
 def market_node(state: AgriState):
     result = get_agriculture_information(
@@ -169,8 +161,6 @@ def market_node(state: AgriState):
     }
 
 
-# ---------------- GEMINI AGENT ----------------
-
 def ai_node(state: AgriState):
     result = ask_gemini(state.get("question", ""))
     return {
@@ -178,8 +168,6 @@ def ai_node(state: AgriState):
         "agent": "Gemini AI Farming Assistant",
     }
 
-
-# ---------------- LANGGRAPH ----------------
 
 graph_builder = StateGraph(AgriState)
 
@@ -205,7 +193,7 @@ graph_builder.add_conditional_edges(
 
 for node in [
     "crop", "weather", "fertilizer",
-    "disease", "market", "ai"
+    "disease", "market", "ai",
 ]:
     graph_builder.add_edge(node, END)
 
@@ -219,10 +207,8 @@ def ask_agriagent(question: str, **details) -> dict:
     })
 
 
-# ---------------- REQUEST MODEL ----------------
-
 class AgriRequest(BaseModel):
-    question: str
+    question: str = Field(min_length=1)
     soil_type: str = ""
     season: str = ""
     location: str = ""
@@ -236,24 +222,36 @@ class AgriRequest(BaseModel):
     symptoms: str = ""
 
 
-# ---------------- ASK + SAVE TO MONGODB ----------------
-
 @app.post("/ask")
 def ask_agriagent_api(request: AgriRequest):
+    question = request.question.strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=422,
+            detail="Please enter a farming question.",
+        )
+
     details = request.model_dump(exclude={"question"})
 
-    # Generate the answer from the appropriate agent
-    response = ask_agriagent(request.question, **details)
+    # Generate advice first.
+    try:
+        response = ask_agriagent(question, **details)
+    except Exception as error:
+        print("Agent error:", error)
+        raise HTTPException(
+            status_code=500,
+            detail="The agricultural agent could not generate advice.",
+        )
 
-    # Save the question and generated answer
+    # Attempt to save the interaction.
     try:
         record_id = save_query(
-            question=request.question,
+            question=question,
             agent=response.get("agent", "Unknown"),
             result=response.get("result", {}),
             details=details,
         )
-
         response["database_saved"] = True
         response["history_id"] = record_id
 
@@ -261,7 +259,26 @@ def ask_agriagent_api(request: AgriRequest):
         print("MongoDB save error:", error)
         response["database_saved"] = False
         response["database_message"] = (
-            "The answer was generated, but it could not be saved."
+            "Advice was generated, but saving failed."
         )
 
     return response
+
+
+@app.get("/history")
+def get_history(limit: int = 10):
+    try:
+        records = get_recent_queries(limit=limit)
+
+        return {
+            "success": True,
+            "count": len(records),
+            "history": records,
+        }
+
+    except Exception as error:
+        print("History retrieval error:", error)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not retrieve history from MongoDB.",
+        )

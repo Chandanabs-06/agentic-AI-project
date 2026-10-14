@@ -204,3 +204,35 @@ if st.button("Get Agricultural Advice", type="primary"):
 
         except ValueError:
             st.error("The backend returned an invalid JSON response.")
+
+st.divider()
+st.header("📚 Recent Farming Questions")
+
+if st.button("Refresh Chat History"):
+    try:
+        history_response = requests.get(
+            "http://127.0.0.1:8000/history",
+            timeout=10,
+        )
+        history_response.raise_for_status()
+
+        history_data = history_response.json()
+        records = history_data.get("history", [])
+
+        if not records:
+            st.info("No saved questions yet.")
+        else:
+            for record in records:
+                question = record.get("question", "No question")
+                agent = record.get("agent", "Unknown agent")
+                result = record.get("result", {})
+                created_at = record.get("created_at", "")
+
+                with st.expander(question):
+                    st.write("**Agent:**", agent)
+                    st.write("**Answer:**")
+                    st.json(result)
+                    st.caption(f"Saved at: {created_at}")
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Could not load chat history: {error}")
